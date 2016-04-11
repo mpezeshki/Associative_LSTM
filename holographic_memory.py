@@ -6,11 +6,11 @@ import theano.tensor as T
 import matplotlib.pyplot as plt
 
 
-# shape: B x F (F=2n)
+# shape: C x B x F (F=2n)
 def complex_mult(r, u, inverse_r=False, moduli_1=False):
-    B, F = u.shape
-    r_rl = r[:, :F / 2]
-    r_im = r[:, F / 2:]
+    _, _, F = u.shape
+    r_rl = r[:, :, :F / 2]
+    r_im = r[:, :, F / 2:]
     if inverse_r:
         if moduli_1:
             r_im = -r_im
@@ -18,70 +18,64 @@ def complex_mult(r, u, inverse_r=False, moduli_1=False):
             tmp = r_rl / (r_rl ** 2 + r_im ** 2)
             r_im = -r_im / (r_rl ** 2 + r_im ** 2)
             r_rl = tmp
-    u_rl = u[:, :F / 2]
-    u_im = u[:, F / 2:]
+    u_rl = u[:, :, :F / 2]
+    u_im = u[:, :, F / 2:]
     res_rl = r_rl * u_rl - r_im * u_im
     res_im = r_rl * u_im + r_im * u_rl
-    res = T.concatenate([res_rl, res_im], axis=1)
+    res = T.concatenate([res_rl, res_im], axis=2)
     return res
 
 
-# shape: B x F (F=2n)
+# key: C x B x F
+# mem: C x F
 def read(key, mem):
-    value = complex_mult(key, mem, inverse_r=True, moduli_1=True)
-    return value
+    value = complex_mult(
+        key,
+        mem.dimshuffle(0, 'x', 1),
+        inverse_r=True, moduli_1=True)
+    return value.mean(axis=0)
 
 
-# shape: B x F (F=2n)
-def write(key, value, mem):
-    coded_value = complex_mult(key, value)
-    return mem + coded_value
+# key: C x B x F
+# value: B x F
+# mem: C x F
+def write(key, value):
+    coded_value = complex_mult(key, value.dimshuffle('x', 0, 1))
+    return coded_value.sum(axis=1)
 
-key = T.matrix('key')
+key = T.tensor3('key')
 value = T.matrix('value')
 mem = T.matrix('mem')
 
 read_func = theano.function([key, mem], read(key, mem))
-write_func = theano.function([key, value, mem], write(key, value, mem))
+write_func = theano.function([key, value], write(key, value))
 
+
+# Let's test it!
+B = 5
+F = 110 * 110 * 3
+C = 20
 
 # shape: 20 x 110 x 110 x 3
-data = np.load('20_images_from_imagenet.npy')
-
-B = 20
-F = 110 * 110 * 3
-Num_copies = 1
-
-phis = np.random.random((B * Num_copies, F / 2)) * 2 * np.pi
-KEYS = np.concatenate([np.cos(phis), np.sin(phis)], axis=1)
-
-# VALUES
+data = np.load('20_images_from_imagenet.npy')[:B]
 VALUES = data.reshape(B, F) - 0.5
 
-MEM = np.zeros((Num_copies, F))
-for i in range(2):
-        MEM = write_func(KEYS[i:i + 1], VALUES[i:i + 1], MEM)
+phis = np.random.random((C, B, F / 2)) * 2 * np.pi
+KEYS = np.concatenate([np.cos(phis), np.sin(phis)], axis=2)
 
-all_imgs = []
-for i in range(B):
-    img = read_func(KEYS[i:i + 1], MEM)
-    all_imgs.append(img)
+MEM = write_func(KEYS, VALUES)
+all_imgs = read_func(KEYS, MEM)
 
-all_imgs = np.concatenate(all_imgs, axis=0)
-
-data = VALUES.reshape(20, 110, 110, 3)
+data = VALUES.reshape(B, 110, 110, 3)
 data = np.swapaxes(data, 0, 1)
-data = np.reshape(data, (110, 110 * 20, 3))
-plt.imshow(data[:, :110 * 2] + 0.5)
+data = np.reshape(data, (110, 110 * B, 3))
+plt.imshow(data[:, :110 * B] + 0.5)
 plt.show()
 
-all_imgs = all_imgs.reshape(20, 110, 110, 3)
+all_imgs = all_imgs.reshape(B, 110, 110, 3)
 all_imgs = np.swapaxes(all_imgs, 0, 1)
-all_imgs = np.reshape(all_imgs, (110, 110 * 20, 3))
-plt.imshow(all_imgs[:, :110 * 2] + 0.5)
+all_imgs = np.reshape(all_imgs, (110, 110 * B, 3))
+plt.imshow(all_imgs[:, :110 * B] + 0.5)
 plt.show()
-
-print np.max(data[:, :110 * 2])
-print np.max(all_imgs[:, :110 * 2])
 
 import ipdb; ipdb.set_trace()
