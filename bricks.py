@@ -56,11 +56,10 @@ class AssociativeLSTM(BaseRecurrent, Initializable):
         self.initial_cells = shared_floatx_zeros((self.num_copies, self.dim),
                                                  name="initial_cells")
         add_role(self.W_state, WEIGHT)
-        add_role(self.initial_state_, INITIAL_STATE)
-        add_role(self.initial_cells, INITIAL_STATE)
+        # add_role(self.initial_state_, INITIAL_STATE)
+        # add_role(self.initial_cells, INITIAL_STATE)
 
-        self.parameters = [
-            self.W_state, self.initial_state_, self.initial_cells]
+        self.parameters = [self.W_state]
 
     def _initialize(self):
         self.weights_init.initialize(self.parameters[0], self.rng)
@@ -69,8 +68,8 @@ class AssociativeLSTM(BaseRecurrent, Initializable):
     # input_: B x F
     def bound(self, input_):
         sq = input_ ** 2
-        d = tensor.maximum(1, tensor.sqrt(
-            sq[:, :self.dim / 2] + sq[:, self.dim / 2:]))
+        d = tensor.sqrt(tensor.maximum(
+            1, sq[:, :self.dim / 2] + sq[:, self.dim / 2:]))
         d = tensor.concatenate([d, d], axis=1)
         return input_ / d
 
