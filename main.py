@@ -21,7 +21,9 @@ x_to_h = Linear(name='x_to_h',
                 output_dim=4.5 * h_dim)
 x_transform = x_to_h.apply(x)
 lstm = AssociativeLSTM(activation=Tanh(),
-                       dim=h_dim, name="lstm")
+                       dim=h_dim,
+                       num_copies=19,
+                       name="lstm")
 h, c = lstm.apply(x_transform)
 h_to_o = Linear(name='h_to_o',
                 input_dim=h_dim,
