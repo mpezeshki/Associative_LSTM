@@ -1,7 +1,8 @@
 import theano
+import os
 import numpy as np
 from theano import tensor
-from blocks.initialization import IsotropicGaussian, Constant
+from blocks.initialization import Constant
 from blocks.bricks import Linear, Tanh
 from bricks import AssociativeLSTM
 from fuel.datasets import IterableDataset
@@ -9,11 +10,16 @@ from fuel.streams import DataStream
 from blocks.model import Model
 from blocks.bricks.cost import SquaredError
 from blocks.algorithms import (GradientDescent, Scale,
-                               StepClipping, CompositeRule)
+                               StepClipping, CompositeRule,
+                               Adam)
 from blocks.extensions.monitoring import TrainingDataMonitoring
 from blocks.main_loop import MainLoop
-from blocks.extensions import FinishAfter, Printing
+from blocks.extensions import Printing
 from blocks.graph import ComputationGraph
+import logging
+from utils import SaveLog, Glorot
+logger = logging.getLogger('main')
+logger.setLevel(logging.INFO)
 floatX = theano.config.floatX
 
 
@@ -37,8 +43,9 @@ def get_episodic_copy_data(time_steps, n_data, n_sequence, batch_size):
 batch_size = 2
 num_copies = 1
 x_dim = 1
-h_dim = 12
+h_dim = 128
 o_dim = 1
+save_path = 'test_path'
 
 print 'Building model ...'
 # T x B x F
@@ -61,7 +68,7 @@ h_to_o = Linear(name='h_to_o',
 o = h_to_o.apply(h)
 
 for brick in (lstm, x_to_h, h_to_o):
-    brick.weights_init = IsotropicGaussian(0.01)
+    brick.weights_init = Glorot()
     brick.biases_init = Constant(0)
     brick.initialize()
 
@@ -73,19 +80,26 @@ shapes = []
 for param in ComputationGraph(cost).parameters:
     # shapes.append((param.name, param.eval().shape))
     shapes.append(np.prod(list(param.eval().shape)))
-
 print "Total number of parameters: " + str(np.sum(shapes))
+
+if not os.path.exists(save_path):
+    os.makedirs(save_path)
+log_path = save_path + '/log.txt'
+fh = logging.FileHandler(filename=log_path)
+fh.setLevel(logging.DEBUG)
+logger.addHandler(fh)
+
 algorithm = GradientDescent(cost=cost,
                             parameters=ComputationGraph(cost).parameters,
                             step_rule=CompositeRule([StepClipping(10.0),
-                                                     Scale(0.001)]))
+                                                     Adam(1e-3)]))  # 3e-4
 monitor_cost = TrainingDataMonitoring([cost],
                                       prefix='train',
                                       after_epoch=False,
                                       before_training=True,
                                       every_n_batches=1000)
 
-data = get_episodic_copy_data(50, int(1e4), 10, batch_size)
+data = get_episodic_copy_data(100, int(1e6), 10, batch_size)
 dataset = IterableDataset({'x': data[0] / 10.0,
                            'y': data[1] / 10.0})
 stream = DataStream(dataset)
@@ -94,7 +108,8 @@ model = Model(cost)
 main_loop = MainLoop(data_stream=stream, algorithm=algorithm,
                      extensions=[monitor_cost,
                                  Printing(after_epoch=False,
-                                          every_n_batches=1000)],
+                                          every_n_batches=1000),
+                                 SaveLog(every_n_batches=1000)],
                      model=model)
 
 print 'Starting training ...'
