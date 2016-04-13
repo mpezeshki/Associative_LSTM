@@ -28,8 +28,10 @@ class Glorot(NdarrayInitialization):
 
             # if it is lstm's concatenated weight
             if (input_size * 4.5 == output_size):
+                print 'Glorot 2'
                 output_size = output_size / 4.5
             elif (input_size * 4 == output_size):
+                print 'Glorot 1'
                 output_size = output_size / 4
 
             high = np.sqrt(6) / np.sqrt(input_size + output_size)

@@ -10,10 +10,11 @@ from holographic_memory import complex_mult
 
 class AssociativeLSTM(BaseRecurrent, Initializable):
     @lazy(allocation=['dim'])
-    def __init__(self, dim, num_copies, activation=None,
+    def __init__(self, dim, num_copies, use_W_xu, activation=None,
                  gate_activation=None, **kwargs):
         self.dim = dim
         self.num_copies = num_copies
+        self.use_W_xu = use_W_xu
 
         # shape: C x F/2
         permutations = []
@@ -109,7 +110,12 @@ class AssociativeLSTM(BaseRecurrent, Initializable):
         out_key = self.bound(slice_(activation, 4))
         # B x F --> C x B x F
         out_keys = self.permute(out_key)
-        u = self.bound(slice_(activation, 5))
+
+        if self.use_W_xu:
+            u = self.bound(slice_(activation, 5))
+        else:
+            u = self.bound(slice_(
+                tensor.dot(states, self.W_state * 0.00001) + inputs, 5))
 
         # 1 x B x F , C x B x F --> C x B x F
         f_x_c = forget_gate.dimshuffle('x', 0, 1) * cells
@@ -133,3 +139,83 @@ class AssociativeLSTM(BaseRecurrent, Initializable):
     def initial_states(self, batch_size, *args, **kwargs):
         return [tensor.repeat(self.initial_state_[None, :], batch_size, 0),
                 tensor.repeat(self.initial_cells[:, None, :], batch_size, 1)]
+
+
+class LSTM(BaseRecurrent, Initializable):
+    @lazy(allocation=['dim'])
+    def __init__(self, dim, bias, activation=None,
+                 gate_activation=None, **kwargs):
+        self.dim = dim
+        self.bias = bias
+
+        if not activation:
+            activation = Tanh()
+        if not gate_activation:
+            gate_activation = Logistic()
+        self.activation = activation
+        self.gate_activation = gate_activation
+
+        children = ([self.activation, self.gate_activation] +
+                    kwargs.get('children', []))
+        super(LSTM, self).__init__(children=children, **kwargs)
+
+    def get_dim(self, name):
+        if name == 'inputs':
+            return self.dim * 4
+        if name in ['states', 'cells']:
+            return self.dim
+        if name == 'mask':
+            return 0
+        return super(LSTM, self).get_dim(name)
+
+    def _allocate(self):
+        self.W_state = shared_floatx_nans((self.dim, 4 * self.dim),
+                                          name='W_state')
+        # The underscore is required to prevent collision with
+        # the `initial_state` application method
+        self.initial_state_ = shared_floatx_zeros((self.dim,),
+                                                  name="initial_state")
+        self.initial_cells = shared_floatx_zeros((self.dim,),
+                                                 name="initial_cells")
+        add_role(self.W_state, WEIGHT)
+        add_role(self.initial_state_, INITIAL_STATE)
+        add_role(self.initial_cells, INITIAL_STATE)
+
+        self.parameters = [
+            self.W_state, self.initial_state_, self.initial_cells]
+
+    def _initialize(self):
+        for weights in self.parameters[:1]:
+            self.weights_init.initialize(weights, self.rng)
+
+    @recurrent(sequences=['inputs', 'mask'], states=['states', 'cells'],
+               contexts=[], outputs=['states', 'cells'])
+    def apply(self, inputs, states, cells, mask=None):
+        def slice_last(x, no):
+            return x[:, no * self.dim: (no + 1) * self.dim]
+
+        activation = tensor.dot(states, self.W_state) + inputs
+        in_gate = self.gate_activation.apply(
+            slice_last(activation, 0))
+        pre = slice_last(activation, 1)
+        forget_gate = self.gate_activation.apply(
+            pre + self.bias * tensor.ones_like(pre))
+        next_cells = (
+            forget_gate * cells +
+            in_gate * self.activation.apply(slice_last(activation, 2)))
+        out_gate = self.gate_activation.apply(
+            slice_last(activation, 3))
+        next_states = out_gate * self.activation.apply(next_cells)
+
+        if mask:
+            next_states = (mask[:, None] * next_states +
+                           (1 - mask[:, None]) * states)
+            next_cells = (mask[:, None] * next_cells +
+                          (1 - mask[:, None]) * cells)
+
+        return next_states, next_cells
+
+    @application(outputs=apply.states)
+    def initial_states(self, batch_size, *args, **kwargs):
+        return [tensor.repeat(self.initial_state_[None, :], batch_size, 0),
+                tensor.repeat(self.initial_cells[None, :], batch_size, 0)]
