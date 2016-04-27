@@ -1,4 +1,4 @@
-![MILA Logo](/doc/mila.png)
+![MILA Logo](/doc/MILA.png)
 
 # Associative LSTM
 
