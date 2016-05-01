@@ -1,6 +1,6 @@
 ![MILA Logo](/doc/MILA.png)
 
-# Associative LSTM
+# Associative Long Short-Term Memory (LSTM)
 
 A Blocks and Theano implementation of Associative LSTM ([arXiv](http://arxiv.org/abs/1602.03032)).
 
